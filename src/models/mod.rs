@@ -1,6 +1,9 @@
 use doryen_rs::Color;
 
 pub mod ai;
+pub mod input;
+
+pub use input::Player;
 
 pub enum DistanceMetric {
     Manhattan,
@@ -87,8 +90,7 @@ impl Position {
 
 pub const ZERO_POS: Position = Position { x: 0, y: 0 };
 
-#[derive(Debug)]
-pub struct Player;
+
 
 /// World Coordinates
 #[derive(Debug)]

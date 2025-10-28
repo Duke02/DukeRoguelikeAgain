@@ -2,9 +2,8 @@ mod entities;
 mod models;
 mod systems;
 
-use std::thread::sleep;
-use std::time::Duration;
 use crate::entities::spawn_goblin;
+use crate::models::input::InputState;
 use crate::models::{Player, Position, Renderable};
 use crate::systems::{AiSystem, InputSystem, SystemFunc};
 use doryen_rs::{App, AppOptions, DoryenApi, Engine, UpdateEvent};
@@ -49,6 +48,8 @@ impl Engine for MyRoguelike {
             },
         ));
 
+        self.world.spawn((InputState::default(),));
+
         spawn_goblin(
             &mut self.world,
             5,
@@ -67,7 +68,9 @@ impl Engine for MyRoguelike {
         // }
 
         for system in &mut self.systems {
-            system.call(&mut self.world, api)
+            if let Err(e) = system.call(&mut self.world, api) {
+                println!("Got error while running system {e:?}");
+            }
         }
         // sleep(Duration::from_millis(250));
 
@@ -75,11 +78,7 @@ impl Engine for MyRoguelike {
     }
     fn render(&mut self, api: &mut dyn DoryenApi) {
         let con = api.con();
-        con.rectangle(
-            0,
-            0,
-            CONSOLE_WIDTH,
-            CONSOLE_HEIGHT,
+        con.clear(
             Some((128, 128, 128, 255)),
             Some((0, 0, 0, 255)),
             Some('.' as u16),
@@ -96,9 +95,12 @@ impl Engine for MyRoguelike {
 
 impl MyRoguelike {
     pub fn new() -> Self {
+        let mut world = World::new();
+        let mut input_system = InputSystem::default();
+        input_system.init(&mut world);
         Self {
-            world: World::new(),
-            systems: vec![Box::new(InputSystem {}), Box::new(AiSystem {})],
+            world,
+            systems: vec![Box::new(input_system), Box::new(AiSystem {})],
         }
     }
 }
