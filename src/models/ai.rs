@@ -15,14 +15,14 @@ impl Vision {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Action {
     GoTo(Position),
     Wait,
     Attack(Position),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum AiState {
     Idling,
     Afraid,
@@ -87,7 +87,9 @@ impl Ai {
                         true,
                         None,
                     ))
-                } else if my_position.distance_squared(player_pos) <= 1.0 {
+                } else if my_position.distance_squared(player_pos) <= 2.0 {
+                    // Allow AIs to reach the player if they're diagonally next to each other.
+                    // (Have a Euclidean distance of sqrt(2))
                     Action::Attack(player_pos.clone())
                 } else {
                     Action::GoTo(player_pos.clone())
@@ -104,7 +106,7 @@ mod tests {
     fn test_vision() {
         let vision = Vision::new(2);
         let one = Position::new(10, 10);
-        
+
         let two = Position::new(10, 10);
         assert!(vision.can_see(&one, &two));
         assert!(vision.can_see(&two, &one));
@@ -126,5 +128,48 @@ mod tests {
         // Distance should be sqrt(5) so shouldn't be within vision range.
         assert!(!vision.can_see(&one, &two));
         assert!(!vision.can_see(&two, &one));
+
+        let vision = Vision::new(3);
+        // Sqrt(5) is between 2 and 2.5 so we should be in vision range.
+        assert!(vision.can_see(&one, &two));
+        assert!(vision.can_see(&two, &one));
+    }
+
+    #[test]
+    fn test_ai_get_next_action() {
+        let player_position = Position::new(10, 10);
+        let vision = Vision::new(2);
+        let mut health = Health::new(10);
+        let mut ai = Ai::default();
+        let ai_pos = Position::new(0, 0);
+
+        let action = ai.get_next_action(&player_position, &ai_pos, &health, &vision);
+        assert_eq!(action, Action::Wait);
+        assert_eq!(ai.curr_state, AiState::Idling);
+
+        let ai_pos = Position::new(9, 9);
+        let action = ai.get_next_action(&player_position, &ai_pos, &health, &vision);
+        assert_eq!(action, Action::GoTo(player_position.clone()));
+        assert_eq!(ai.curr_state, AiState::Angry);
+
+        let action = ai.get_next_action(&player_position, &ai_pos, &health, &vision);
+        assert_eq!(action, Action::Attack(player_position.clone()));
+        assert_eq!(ai.curr_state, AiState::Angry);
+
+        // We're now big hurt
+        health.current_health = 1;
+        let action = ai.get_next_action(&player_position, &ai_pos, &health, &vision);
+        match action {
+            Action::GoTo(pos) => {
+                // Make sure it's not the same position as the player anymore.
+                assert_ne!(pos, player_position);
+                // Make sure the AI is going the completely opposite direction.
+                let diff_angle =
+                    player_position.angle(&pos, None) - ai_pos.angle(&player_position, None);
+                assert!(diff_angle - 180.0 < 1e-3);
+            }
+            _ => assert!(false),
+        }
+        assert_eq!(ai.curr_state, AiState::Afraid);
     }
 }

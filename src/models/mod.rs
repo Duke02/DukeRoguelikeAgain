@@ -99,8 +99,8 @@ pub struct WindowCoordinates {
 
 #[derive(Debug)]
 pub struct Health {
-    total_health: u32,
-    current_health: i32,
+    pub total_health: u32,
+    pub current_health: i32,
 }
 
 impl Health {
