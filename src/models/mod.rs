@@ -33,9 +33,29 @@ impl Position {
         Position { x, y }
     }
 
-    pub fn go_towards(&self, other: &Position, distance: u32) -> Position {
-        let angle = self.angle(other, None);
-        self.go_distance_theta(distance as f64, angle)
+    pub fn go_towards(&self, other: &Position) -> Position {
+        let angle = self.angle(other, Some(DistanceMetric::Manhattan));
+        let (dx, dy) = angle.sin_cos();
+        let (adx, ady) = (dx.abs(), dy.abs());
+        let (sdx, sdy) = (dx.signum(), dy.signum());
+        if adx > ady {
+            Position {
+                x: self.x + sdx as isize * 1,
+                y: self.y,
+            }
+        } else if ady > adx {
+            Position {
+                x: self.x,
+                y: self.y + sdy as isize * 1,
+            }
+        } else {
+            // They're both equal so let's go diagonally.
+            Position {
+                x: self.x + 1 * sdx as isize,
+                y: self.y + 1 * sdy as isize,
+            }
+        }
+        // self.go_distance_theta(distance as f64, angle)
     }
 
     pub fn go_distance_theta(&self, distance: f64, theta: f64) -> Position {
@@ -89,8 +109,6 @@ impl Position {
 }
 
 pub const ZERO_POS: Position = Position { x: 0, y: 0 };
-
-
 
 /// World Coordinates
 #[derive(Debug)]
@@ -226,6 +244,9 @@ mod tests {
 
         let distance = one.distance(&two, &DistanceMetric::EuclideanSquared);
         assert_eq!(distance, 200.0);
-        assert_eq!(distance, DistanceMetric::EuclideanSquared.distance(&one, &two));
+        assert_eq!(
+            distance,
+            DistanceMetric::EuclideanSquared.distance(&one, &two)
+        );
     }
 }

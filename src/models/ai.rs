@@ -72,14 +72,24 @@ impl Ai {
                     Action::Wait
                 }
             }
-            AiState::Afraid => Action::GoTo(self.find_position_relative_to_player(
-                player_pos,
-                my_position,
-                true,
-                None,
-            )),
+            AiState::Afraid => {
+                if !my_vision.can_see(my_position, player_pos) {
+                    self.curr_state = AiState::Idling;
+                    Action::Wait
+                } else {
+                    Action::GoTo(self.find_position_relative_to_player(
+                        player_pos,
+                        my_position,
+                        true,
+                        None,
+                    ))
+                }
+            }
             AiState::Angry => {
-                if my_health.get_ratio() < 0.25 {
+                if !my_vision.can_see(my_position, player_pos) {
+                    self.curr_state = AiState::Idling;
+                    Action::Wait
+                } else if my_health.get_ratio() < 0.25 {
                     self.curr_state = AiState::Afraid;
                     Action::GoTo(self.find_position_relative_to_player(
                         player_pos,

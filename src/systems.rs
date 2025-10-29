@@ -6,7 +6,6 @@ use doryen_rs::DoryenApi;
 use hecs::{Entity, World};
 use std::collections::HashSet;
 use std::error::Error;
-use std::ops::Deref;
 
 pub trait SystemFunc {
     fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> Result<(), Box<dyn Error>>;
@@ -71,13 +70,8 @@ pub struct AiSystem;
 
 impl SystemFunc for AiSystem {
     fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> Result<(), Box<dyn Error>> {
-        let mut binding = world
-            .query::<&InputState>();
-        let (_entity, input_state) = binding
-            .into_iter()
-            .next()
-            .unwrap()
-            ;
+        let mut binding = world.query::<&InputState>();
+        let (_entity, input_state) = binding.into_iter().next().unwrap();
         if !input_state.was_input_handled_this_frame {
             return Ok(());
         }
@@ -106,8 +100,17 @@ impl SystemFunc for AiSystem {
 
         for (id, (ai, ai_pos, ai_health, ai_vision)) in ai_query.view().iter_mut() {
             let action = ai.get_next_action(player_pos, ai_pos, ai_health, ai_vision);
+            println!("Entity with ID {id:?} will do action {action:?}");
             match action {
-                Action::GoTo(new_pos) => *ai_pos = ai_pos.go_towards(&new_pos, 1),
+                Action::GoTo(new_pos) => {
+                    let Position { x, y } = ai_pos.go_towards(&new_pos);
+                    // if ai_pos.fast_distance(&Position {x, y}) > 0.0 {
+                    //     assert_ne!(x, ai_pos.x);
+                    //     assert_ne!(y, ai_pos.y);
+                    // }
+                    ai_pos.x = x;
+                    ai_pos.y = y
+                }
                 Action::Wait => {} // Do Nothing.
                 Action::Attack(pos_to_attack) => {
                     if has_entity.contains(&pos_to_attack) {
