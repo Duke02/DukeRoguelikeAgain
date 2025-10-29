@@ -50,7 +50,7 @@ impl Ai {
         distance: Option<f64>,
     ) -> Position {
         let distance = distance.unwrap_or(10.0);
-        let angle = my_position.angle(player_position, None);
+        let angle = my_position.angle(player_position);
         let pos = my_position
             .go_distance_theta(distance, if invert_angle { 180.0 - angle } else { angle });
         pos
@@ -175,7 +175,7 @@ mod tests {
                 assert_ne!(pos, player_position);
                 // Make sure the AI is going the completely opposite direction.
                 let diff_angle =
-                    player_position.angle(&pos, None) - ai_pos.angle(&player_position, None);
+                    player_position.angle(&pos) - ai_pos.angle(&player_position);
                 assert!(diff_angle - 180.0 < 1e-3);
             }
             _ => assert!(false),

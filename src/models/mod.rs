@@ -34,7 +34,7 @@ impl Position {
     }
 
     pub fn go_towards(&self, other: &Position) -> Position {
-        let angle = self.angle(other, Some(DistanceMetric::Manhattan));
+        let angle = self.angle(other);
         let (dx, dy) = angle.sin_cos();
         let (adx, ady) = (dx.abs(), dy.abs());
         let (sdx, sdy) = (dx.signum(), dy.signum());
@@ -66,13 +66,10 @@ impl Position {
     }
 
     /// Output is in radians. Uses Manhattan distance by default.
-    pub fn angle(&self, other: &Position, distance_metric: Option<DistanceMetric>) -> f64 {
-        let metric = distance_metric.unwrap_or(DistanceMetric::Manhattan);
-        let self_magnitude = self.distance_from_zero(&metric);
-        let other_magnitude = other.distance_from_zero(&metric);
-        let dot = self.dot_product(other) as f64;
-        let inner = dot / (self_magnitude * other_magnitude);
-        inner.acos()
+    pub fn angle(&self, other: &Position) -> f64 {
+        let dx = (other.x - self.x) as f64;
+        let dy = (other.y - self.y) as f64;
+        dy.atan2(dx)
     }
 
     pub fn distance(&self, other: &Position, method: &DistanceMetric) -> f64 {
@@ -248,5 +245,31 @@ mod tests {
             distance,
             DistanceMetric::EuclideanSquared.distance(&one, &two)
         );
+    }
+
+    #[test]
+    fn test_position_angle() {
+        let one = Position::new(0, 0);
+        let two = Position::new(1, 1);
+
+        // 45 degrees
+        let angle = one.angle(&two);
+        assert_eq!(angle, 45.0_f64.to_radians());
+        let angle2 = two.angle(&one);
+        assert_eq!(angle2, -135.0_f64.to_radians());
+
+        // 90 degrees
+        let two = Position::new(0, 1);
+        let angle = one.angle(&two);
+        assert_eq!(angle, 90.0_f64.to_radians());
+        let angle2 = two.angle(&one);
+        assert_eq!(angle2, -90.0_f64.to_radians());
+
+        // 0 degrees
+        let two = Position::new(1, 0);
+        let angle = one.angle(&two);
+        assert_eq!(angle, 0.0);
+        let angle2 = two.angle(&one);
+        assert_eq!(angle2, 180.0_f64.to_radians());
     }
 }
