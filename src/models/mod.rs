@@ -35,7 +35,7 @@ impl Position {
 
     pub fn go_towards(&self, other: &Position) -> Position {
         let angle = self.angle(other);
-        let (dx, dy) = angle.sin_cos();
+        let (dy, dx) = angle.sin_cos();
         let (adx, ady) = (dx.abs(), dy.abs());
         let (sdx, sdy) = (dx.signum(), dy.signum());
         if adx > ady {
@@ -271,5 +271,25 @@ mod tests {
         assert_eq!(angle, 0.0);
         let angle2 = two.angle(&one);
         assert_eq!(angle2, 180.0_f64.to_radians());
+    }
+
+    #[test]
+    fn test_go_towards() {
+        let initial_start = Position::new(0, 0);
+        let goal = Position::new(10, 10);
+
+        let mut curr_pos = initial_start;
+
+        while curr_pos.distance(&goal, &DistanceMetric::Euclidean) > 0.0 {
+            let next_pos = curr_pos.go_towards(&goal);
+            println!("Curr Pos {curr_pos:?} -> Goal {goal:?} => Next Pos {next_pos:?}");
+            let distance_to_goal = curr_pos.distance(&goal, &DistanceMetric::Euclidean);
+            let next_distance_to_goal = next_pos.distance(&goal, &DistanceMetric::Euclidean);
+            println!("Distance to goal: {distance_to_goal}");
+            println!("Next Distance to goal: {next_distance_to_goal}");
+
+            assert!(distance_to_goal > next_distance_to_goal);
+            curr_pos = next_pos;
+        }
     }
 }
