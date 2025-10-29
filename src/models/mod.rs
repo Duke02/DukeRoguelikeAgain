@@ -6,8 +6,11 @@ pub mod input;
 pub use input::Player;
 
 pub enum DistanceMetric {
+    /// Manhattan Distance (abs(dx) + abs(dy)). Use if you want things to be box like.
     Manhattan,
+    /// Euclidean Distance. Slow to run, but use if you want things to be circular.
     Euclidean,
+    /// Squared Euclidean Distance. Faster than Euclidean (cuz no sqrt) but you need to square your comparison. Can be used in the same way as Euclidean.
     EuclideanSquared,
 }
 
