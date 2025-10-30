@@ -89,12 +89,9 @@ impl SystemFunc for InputSystem {
             tracing::debug!("Flipping the input state!");
             input_state.was_input_handled_this_frame = true;
 
-            let Position { x: nx, y: ny } = next_position;
-            if nx >= 1 && nx <= (CONSOLE_WIDTH - 2) as isize {
-                player_pos.x = nx;
-            }
-            if ny >= 1 && ny <= (CONSOLE_HEIGHT - 2) as isize {
-                player_pos.y = ny;
+            if next_position.is_within_console_bounds() {
+                player_pos.x = next_position.x;
+                player_pos.y = next_position.y;
             }
         }
 

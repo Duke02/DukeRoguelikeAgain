@@ -4,6 +4,7 @@ pub mod ai;
 pub mod input;
 pub mod stats;
 
+use crate::{CONSOLE_HEIGHT, CONSOLE_WIDTH};
 pub use input::Player;
 
 #[derive(Debug)]
@@ -65,6 +66,18 @@ impl Position {
         tracing::trace!(?out_pos, ?other, ?self, ?angle, ?dy, ?dx);
         out_pos
         // self.go_distance_theta(distance as f64, angle)
+    }
+
+    /// Inclusive bounds.
+    pub fn is_within_bounds(&self, (min_x, max_x): (u32, u32), (min_y, max_y): (u32, u32)) -> bool {
+        self.x >= min_x as isize
+            && self.x <= max_x as isize
+            && self.y >= min_y as isize
+            && self.y <= max_y as isize
+    }
+
+    pub fn is_within_console_bounds(&self) -> bool {
+        self.is_within_bounds((1, CONSOLE_WIDTH - 2), (1, CONSOLE_HEIGHT - 2))
     }
 
     pub fn go_distance_theta(&self, distance: f64, theta: f64) -> Position {
