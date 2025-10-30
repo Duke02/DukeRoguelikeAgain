@@ -1,16 +1,21 @@
 mod entities;
+mod error;
 mod models;
 mod systems;
-mod error;
 
-use std::cell::RefCell;
-use std::sync::Arc;
 use crate::entities::spawn_goblin;
 use crate::models::input::InputState;
-use crate::models::{Health, Player, Position, Renderable};
-use crate::systems::{AiSystem, InputSystem, SystemFunc};
+use crate::models::stats::Health;
+use crate::models::{Player, Position, Renderable};
+use crate::systems::{AiSystem, DamageSystem, DeadCollector, InputSystem, SystemFunc};
 use doryen_rs::{App, AppOptions, DoryenApi, Engine, UpdateEvent};
 use hecs::World;
+use std::cell::RefCell;
+use std::sync::Arc;
+use tracing::log::{Level, LevelFilter};
+use tracing_subscriber::field::MakeExt;
+use tracing_subscriber::fmt::format;
+use tracing_subscriber::fmt::format::FmtSpan;
 // // this part makes it possible to compile to wasm32 target
 // #[cfg(target_arch = "wasm32")]
 // use wasm_bindgen::prelude::*;
@@ -38,11 +43,12 @@ struct MyRoguelike {
 
 impl Engine for MyRoguelike {
     fn init(&mut self, api: &mut dyn DoryenApi) {
+        tracing::info!("Initializing Duke Roguelike");
         api.con().register_color("white", (255, 255, 255, 255));
         api.con().register_color("red", (255, 92, 92, 255));
         api.con().register_color("blue", (192, 192, 255, 255));
 
-        self.world.spawn((
+        let player_entity = (
             Player {},
             Position::new((CONSOLE_WIDTH / 2) as isize, (CONSOLE_HEIGHT / 2) as isize),
             Renderable {
@@ -51,14 +57,24 @@ impl Engine for MyRoguelike {
             },
             Health::new(15),
             InputState::default(),
-        ));
+        );
 
+        tracing::debug!(?player_entity, "Spawning player...");
+        self.world.spawn(player_entity);
+
+        tracing::debug!("Spawning goblins...");
         spawn_goblin(
             &mut self.world,
             5,
             (5, 10),
             (CONSOLE_WIDTH as usize - 2, CONSOLE_HEIGHT as usize - 2),
         );
+
+        tracing::info!("Initializing all ECS systems...");
+        for system in self.systems.iter_mut() {
+            tracing::debug!("Initializing {}...", system.get_name());
+            system.init(&mut self.world);
+        }
     }
     fn update(&mut self, api: &mut dyn DoryenApi) -> Option<UpdateEvent> {
         // capture the screen
@@ -74,9 +90,11 @@ impl Engine for MyRoguelike {
 
         // let world = Arc::new(&mut self.world);
 
+        tracing::trace!("Processing systems...");
         for system in &mut self.systems {
+            tracing::trace!("Updating {}...", system.get_name());
             if let Err(e) = system.call(&mut self.world, api) {
-                println!("Got error while running system {e:?}");
+                tracing::error!("Got error while running system {e:?}");
             }
         }
         // sleep(Duration::from_millis(250));
@@ -84,6 +102,7 @@ impl Engine for MyRoguelike {
         None
     }
     fn render(&mut self, api: &mut dyn DoryenApi) {
+        tracing::trace!("Rendering Roguelike...");
         let con = api.con();
         con.clear(
             Some((128, 128, 128, 255)),
@@ -102,17 +121,43 @@ impl Engine for MyRoguelike {
 
 impl MyRoguelike {
     pub fn new() -> Self {
-        let mut world = World::new();
-        let mut input_system = InputSystem::default();
-        input_system.init(&mut world);
+        let world = World::new();
+        let input_system = InputSystem::default();
         Self {
             world,
-            systems: vec![Box::new(input_system), Box::new(AiSystem::new())],
+            systems: vec![
+                Box::new(input_system),
+                Box::new(AiSystem::new()),
+                Box::new(DamageSystem::default()),
+                Box::new(DeadCollector::default()),
+            ],
         }
     }
 }
 
+fn setup_logger() {
+    tracing_subscriber::fmt()
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .with_span_events(FmtSpan::ACTIVE | FmtSpan::CLOSE)
+        .with_line_number(true)
+        .with_level(true)
+        .fmt_fields(
+            format::debug_fn(|writer, field, value| {
+                if field.to_string() == "message".to_string() {
+                    write!(writer, "{value:?}")
+                } else {
+                    write!(writer, "{field}: `{value:?}`")
+                }
+            })
+            .delimited(", "),
+        )
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
+}
+
 fn main() {
+    // tracing::subscriber::set_global_default()
+    setup_logger();
     // here are all the available options.
     // better practise is to use default values (see other examples)
     let options = AppOptions {

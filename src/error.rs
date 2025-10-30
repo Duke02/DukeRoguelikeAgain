@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
-use hecs::ComponentError;
+use hecs::{ComponentError, NoSuchEntity};
 
 #[derive(Debug)]
 pub enum DRError {
@@ -19,6 +19,12 @@ impl Error for DRError {}
 impl From<ComponentError> for DRError {
     fn from(err: ComponentError) -> Self {
         DRError::ComponentMissing(err.to_string())
+    }
+}
+
+impl From<NoSuchEntity> for DRError {
+    fn from(value: NoSuchEntity) -> Self {
+        DRError::MissingEntity(value.to_string())
     }
 }
 

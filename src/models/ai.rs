@@ -1,4 +1,5 @@
-use crate::models::{DistanceMetric, Health, Position};
+use crate::models::stats::Health;
+use crate::models::{DistanceMetric, Position};
 
 #[derive(Debug)]
 pub struct Vision {
@@ -7,11 +8,14 @@ pub struct Vision {
 
 impl Vision {
     pub fn new(view_range: usize) -> Self {
+        tracing::trace!(view_range = view_range, "Creating vision");
         Vision { view_range }
     }
     pub fn can_see(&self, self_pos: &Position, position: &Position) -> bool {
-        self_pos.distance(position, &DistanceMetric::EuclideanSquared)
-            <= (self.view_range.pow(2) as f64)
+        let can_see = self_pos.distance(position, &DistanceMetric::EuclideanSquared)
+            <= (self.view_range.pow(2) as f64);
+        tracing::debug!(can_see = can_see, self_pos = ?self_pos, position = ?position);
+        can_see
     }
 }
 
@@ -53,6 +57,7 @@ impl Ai {
         let angle = my_position.angle(player_position);
         let pos = my_position
             .go_distance_theta(distance, if invert_angle { 180.0 - angle } else { angle });
+        tracing::debug!("Found position relative to {player_position:?} to be {pos:?}");
         pos
     }
 
@@ -63,7 +68,7 @@ impl Ai {
         my_health: &Health,
         my_vision: &Vision,
     ) -> Action {
-        match self.curr_state {
+        let action_to_take = match self.curr_state {
             AiState::Idling => {
                 if my_vision.can_see(my_position, player_pos) {
                     self.curr_state = AiState::Angry;
@@ -105,7 +110,12 @@ impl Ai {
                     Action::GoTo(player_pos.clone())
                 }
             }
-        }
+        };
+        tracing::trace!(
+            "Given Player Pos {player_pos:?}, curr_state={:?}, my position={my_position:?}, my_health={my_health:?}, my_vision={my_vision:?} => action={action_to_take:?}",
+            self.curr_state
+        );
+        action_to_take
     }
 }
 
@@ -174,8 +184,7 @@ mod tests {
                 // Make sure it's not the same position as the player anymore.
                 assert_ne!(pos, player_position);
                 // Make sure the AI is going the completely opposite direction.
-                let diff_angle =
-                    player_position.angle(&pos) - ai_pos.angle(&player_position);
+                let diff_angle = player_position.angle(&pos) - ai_pos.angle(&player_position);
                 assert!(diff_angle - 180.0 < 1e-3);
             }
             _ => assert!(false),

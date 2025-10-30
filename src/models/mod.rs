@@ -2,9 +2,11 @@ use doryen_rs::Color;
 
 pub mod ai;
 pub mod input;
+pub mod stats;
 
 pub use input::Player;
 
+#[derive(Debug)]
 pub enum DistanceMetric {
     /// Manhattan Distance (abs(dx) + abs(dy)). Use if you want things to be box like.
     Manhattan,
@@ -23,11 +25,13 @@ pub struct Position {
 
 impl DistanceMetric {
     pub fn distance(&self, pos: &Position, other: &Position) -> f64 {
-        match self {
+        let out_distance = match self {
             DistanceMetric::Manhattan => pos.fast_distance(other),
             DistanceMetric::Euclidean => pos.euclidean_distance(other),
             DistanceMetric::EuclideanSquared => pos.distance_squared(other),
-        }
+        };
+        tracing::trace!(?out_distance, ?pos, ?other);
+        out_distance
     }
 }
 
@@ -41,7 +45,7 @@ impl Position {
         let (dy, dx) = angle.sin_cos();
         let (adx, ady) = (dx.abs(), dy.abs());
         let (sdx, sdy) = (dx.signum(), dy.signum());
-        if adx > ady {
+        let out_pos = if adx > ady {
             Position {
                 x: self.x + sdx as isize * 1,
                 y: self.y,
@@ -57,7 +61,9 @@ impl Position {
                 x: self.x + 1 * sdx as isize,
                 y: self.y + 1 * sdy as isize,
             }
-        }
+        };
+        tracing::trace!(?out_pos, ?other, ?self, ?angle, ?dy, ?dx);
+        out_pos
         // self.go_distance_theta(distance as f64, angle)
     }
 
@@ -65,14 +71,18 @@ impl Position {
         let (dx, dy) = theta.sin_cos();
         let x = (dx * distance) as isize;
         let y = (dy * distance) as isize;
-        Position::new(x + self.x, y + self.y)
+        let out = Position::new(x + self.x, y + self.y);
+        tracing::trace!(?out, ?self, ?distance, ?theta, ?dy, ?dx);
+        out
     }
 
     /// Output is in radians. Uses Manhattan distance by default.
     pub fn angle(&self, other: &Position) -> f64 {
         let dx = (other.x - self.x) as f64;
         let dy = (other.y - self.y) as f64;
-        dy.atan2(dx)
+        let theta = dy.atan2(dx);
+        tracing::trace!(?theta, ?self, ?other);
+        theta
     }
 
     pub fn distance(&self, other: &Position, method: &DistanceMetric) -> f64 {
@@ -84,7 +94,9 @@ impl Position {
     }
 
     fn dot_product(&self, other: &Position) -> isize {
-        self.x * other.x + self.y * other.y
+        let product = self.x * other.x + self.y * other.y;
+        tracing::debug!(?product, ?self, ?other);
+        product
     }
 
     /// Manhattan distance
@@ -115,24 +127,6 @@ pub const ZERO_POS: Position = Position { x: 0, y: 0 };
 pub struct WindowCoordinates {
     x: f64,
     y: f64,
-}
-
-#[derive(Debug)]
-pub struct Health {
-    pub total_health: u32,
-    pub current_health: i32,
-}
-
-impl Health {
-    pub fn new(health: u32) -> Health {
-        Health {
-            total_health: health,
-            current_health: health as i32,
-        }
-    }
-    pub fn get_ratio(&self) -> f32 {
-        self.current_health as f32 / self.total_health as f32
-    }
 }
 
 #[derive(Debug)]

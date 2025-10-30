@@ -1,12 +1,12 @@
 use crate::error::{DRError, DRResult};
 use crate::models::ai::{Action, Ai, Vision};
 use crate::models::input::InputState;
-use crate::models::{Health, Player, Position};
+use crate::models::stats::{Damage, Health};
+use crate::models::{Player, Position};
 use crate::{CONSOLE_HEIGHT, CONSOLE_WIDTH};
 use doryen_rs::DoryenApi;
-use hecs::{Entity, PreparedQuery, RefMut, With, World};
+use hecs::{Entity, PreparedQuery, Ref, With, World};
 use std::borrow::BorrowMut;
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -15,6 +15,8 @@ pub trait SystemFunc {
     fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()>;
 
     fn init(&mut self, world: &mut World) {}
+
+    fn get_name(&self) -> String;
 }
 
 pub struct InputSystem {
@@ -31,12 +33,13 @@ impl Default for InputSystem {
 
 impl SystemFunc for InputSystem {
     fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
-        let world = Arc::new(RefCell::new(world));
-        let mut binding = (*world).borrow_mut();
-        let mut player_pos_query = binding.query_mut::<(&mut Position, &Player)>();
+        tracing::trace!("InputSystem::call");
+        // let world = Arc::new(RefCell::new(world));
+        // let mut binding = (*world).borrow_mut();
+        let mut player_pos_query = world.query_mut::<(&mut Position, &Player)>();
 
-        let mut binding = (*api).borrow_mut();
-        let input = binding.input();
+        // let mut binding = (*api).borrow_mut();
+        let input = api.input();
 
         let mut had_input = false;
 
@@ -59,58 +62,81 @@ impl SystemFunc for InputSystem {
             break;
         }
         drop(player_pos_query);
+
         // let input_state_query = world.query()
-        let binding = world.borrow();
-        let mut input_state = binding.get::<&mut InputState>(
+        let mut input_state = world.get::<&mut InputState>(
             self.input_state_entity_id
                 .expect("Input System was not initialized!"),
         )?;
+        if input_state.was_input_handled_this_frame != had_input {
+            tracing::debug!("Flipping the input state!");
+        }
         input_state.was_input_handled_this_frame = had_input;
         Ok(())
     }
 
     fn init(&mut self, world: &mut World) {
-        self.input_state_entity_id = Some(world.spawn((InputState::default(),)));
+        self.input_state_entity_id = Some(
+            world
+                .query::<&InputState>()
+                .iter()
+                .next()
+                .expect("InputState not found in world.")
+                .0,
+        );
+        // self.input_state_entity_id = Some(world.spawn((InputState::default(),)));
+    }
+
+    fn get_name(&self) -> String {
+        "InputSystem".to_string()
     }
 }
 
 pub struct AiSystem {
-    health_query: RefCell<PreparedQuery<With<&'static Position, &'static Health>>>,
-    ai_query: RefCell<
-        PreparedQuery<(
-            &'static mut Ai,
-            &'static mut Position,
-            &'static Health,
-            &'static Vision,
-        )>,
-    >,
+    health_query: PreparedQuery<With<&'static Position, &'static Health>>,
+    ai_query: PreparedQuery<(
+        &'static mut Ai,
+        &'static mut Position,
+        &'static Health,
+        &'static Vision,
+    )>,
     player_entity_id: Option<Entity>,
 }
 
 impl AiSystem {
     pub fn new() -> AiSystem {
         Self {
-            health_query: RefCell::new(PreparedQuery::new()),
-            ai_query: RefCell::new(PreparedQuery::new()),
+            health_query: PreparedQuery::new(),
+            ai_query: PreparedQuery::new(),
             player_entity_id: None,
         }
     }
 
-    fn get_entity_locs(&self, world: &Arc<RefCell<&mut World>>) -> HashSet<Position> {
-        let binding = world.borrow();
-        self.health_query
-            .borrow_mut()
-            .query(&**binding)
+    fn get_entity_locs(&mut self, world: &mut World) -> HashSet<Position> {
+        let positions = self
+            .health_query
+            .query(world)
             .view()
             .into_iter()
             .map(|(_id, pos)| pos.clone())
-            .collect::<HashSet<Position>>()
+            .collect::<HashSet<Position>>();
+        tracing::trace!(?positions, "get_entity_locs");
+        positions
     }
 
     fn was_input_handled_this_frame(&self, world: &World) -> bool {
-        let mut binding = world.query::<&InputState>();
-        let (_entity, input_state) = binding.into_iter().next().unwrap();
+        let input_state = world
+            .get::<&InputState>(self.player_entity_id.unwrap())
+            .expect("Could not get input state!");
         input_state.was_input_handled_this_frame
+        // let mut binding = world.query::<&InputState>();
+        // let (_entity, input_state) = binding.into_iter().next().unwrap();
+        // let was_input_handled_this_frame = input_state.was_input_handled_this_frame;
+        // tracing::trace!(
+        //     ?was_input_handled_this_frame,
+        //     "was_input_handled_this_frame"
+        // );
+        // was_input_handled_this_frame
     }
 
     // fn get_player_pos_health<'a>(
@@ -126,65 +152,82 @@ impl AiSystem {
 impl SystemFunc for AiSystem {
     fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
         if !self.was_input_handled_this_frame(&world) {
+            tracing::trace!("Player didn't do any input so skipping AI...");
             return Ok(());
         }
-
+        tracing::debug!("AiSystem::call");
         // player_pos: &Position,
         //         my_position: &Position,
         //         my_health: &Health,
         //         my_vision: &Vision,
 
-        let world = Arc::new(RefCell::new(world));
+        // let world = Arc::new(RefCell::new(world));
 
-        let has_entity = self.get_entity_locs(&world);
+        let has_entity = self.get_entity_locs(world);
 
-        let player_pos = world
-            .borrow()
-            .get::<&Position>(
-                self.player_entity_id
-                    .ok_or(DRError::MissingEntity("player".to_string()))?,
-            )?
+        let player_id = self
+            .player_entity_id
+            .ok_or(DRError::MissingEntity("player".to_string()))?;
+
+        let player = world.entity(player_id.clone())?;
+
+        tracing::debug!("Getting player pos...");
+
+        let player_pos = player
+            .get::<&Position>()
+            .ok_or(DRError::ComponentMissing("Position".to_string()))?
             .deref()
             .clone();
-        let binding = world.borrow();
-        let mut player_health = binding.get::<&mut Health>(
-            self.player_entity_id
-                .ok_or(DRError::MissingEntity("player".to_string()))?,
-        )?;
+        // let mut player_health = world.get::<&mut Health>(
+        //     self.player_entity_id
+        //         .ok_or(DRError::MissingEntity("player".to_string()))?,
+        // )?;
 
         // let (player_pos, mut player_health) = self
         //     .get_player_pos_health(&world)
         //     .ok_or(DRError::ComponentMissing("Position/Health".to_string()))?;
 
-        let mut binding = self.ai_query.borrow_mut();
-        let mut binding2 = (*world).borrow_mut();
-        let ai_query = binding.query_mut(&mut binding2);
-
+        let binding = self.ai_query.borrow_mut();
+        let ai_query = binding.query_mut(world);
+        tracing::info!("Processing AIs...");
+        let mut damages: Vec<(Damage,)> = Vec::new();
         for (id, (ai, ai_pos, ai_health, ai_vision)) in ai_query {
             let action = ai.get_next_action(&player_pos, ai_pos, ai_health, ai_vision);
-            println!("Entity with ID {id:?} will do action {action:?}");
+            tracing::debug!("Entity with ID {id:?} will do action {action:?}");
             match action {
                 Action::GoTo(new_pos) => {
                     // TODO: Add bounds/occupancy checking.
-                    let Position { x, y } = ai_pos.go_towards(&new_pos);
-                    ai_pos.x = x;
-                    ai_pos.y = y
+                    let next_pos = ai_pos.go_towards(&new_pos);
+                    if !has_entity.contains(&next_pos) {
+                        let Position { x, y } = next_pos;
+                        ai_pos.x = x;
+                        ai_pos.y = y;
+                    }
                 }
                 Action::Wait => {} // Do Nothing.
                 Action::Attack(pos_to_attack) => {
                     if has_entity.contains(&pos_to_attack) {
-                        println!("Entity with ID {id:?} attacked the entity at {pos_to_attack:?}");
+                        tracing::debug!(
+                            "Entity with ID {id:?} attacked the entity at {pos_to_attack:?}"
+                        );
+                        damages.push((Damage {
+                            from: id,
+                            to: player_id.clone(),
+                            damage: 1,
+                        },))
                     } else {
-                        println!(
-                            "Entity with ID {id:?} tried to attack the empty air at {pos_to_attack:?} and looked like a dumbass."
+                        tracing::debug!(
+                            "Entity with ID {id:?} tried to attack the empty air at {pos_to_attack:?}."
                         )
                     }
                 }
             }
         }
+        world.spawn_batch(damages);
         Ok(())
     }
     fn init(&mut self, world: &mut World) {
+        tracing::debug!("AiSystem::init");
         self.player_entity_id = Some(
             world
                 .query::<&Player>()
@@ -194,6 +237,47 @@ impl SystemFunc for AiSystem {
                 .0,
         );
     }
+
+    fn get_name(&self) -> String {
+        "AISystem".to_string()
+    }
+}
+
+/// BRING OUT YOUR DEAD!!
+pub struct DeadCollector {
+    dead_finder: PreparedQuery<&'static Health>,
+}
+
+impl Default for DeadCollector {
+    fn default() -> Self {
+        Self {
+            dead_finder: PreparedQuery::default(),
+        }
+    }
+}
+
+impl SystemFunc for DeadCollector {
+    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+        let ones_to_remove: Vec<_> = self
+            .dead_finder
+            .query(world)
+            .iter()
+            .filter(|(_, health)| health.current_health <= 0)
+            .map(|(id, _health)| id)
+            .collect();
+
+        for id in ones_to_remove {
+            world.despawn(id)?;
+        }
+        Ok(())
+    }
+    fn init(&mut self, world: &mut World) {
+        self.dead_finder = PreparedQuery::new();
+    }
+
+    fn get_name(&self) -> String {
+        "DeadCollector".to_string()
+    }
 }
 
 /// Deletes dead AIs and spawns new ones as needed.
@@ -202,5 +286,34 @@ struct AiHandlerSystem;
 impl SystemFunc for AiHandlerSystem {
     fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
         todo!()
+    }
+
+    fn get_name(&self) -> String {
+        "AiHandlerSystem".to_string()
+    }
+}
+
+#[derive(Default)]
+pub struct DamageSystem {
+    damage_query: PreparedQuery<&'static Damage>,
+}
+
+impl SystemFunc for DamageSystem {
+    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+        // Get all entities that need damage applied to them
+        // Then remove the health from them.
+        for (_, damage) in self.damage_query.query(&world).iter() {
+            let mut damaged_entity = world.get::<&mut Health>(damage.to)?;
+            damaged_entity.current_health -= damage.damage;
+        }
+
+        Ok(())
+    }
+    fn init(&mut self, world: &mut World) {
+        self.damage_query = PreparedQuery::new();
+    }
+
+    fn get_name(&self) -> String {
+        "DamageSystem".to_string()
     }
 }

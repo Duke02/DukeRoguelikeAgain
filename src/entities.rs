@@ -1,6 +1,6 @@
-use std::fs::read_dir;
 use crate::models::ai::{Ai, Vision};
-use crate::models::{Health, Position, Renderable};
+use crate::models::stats::Health;
+use crate::models::{Position, Renderable};
 use hecs::World;
 
 pub fn spawn_goblin(
@@ -9,6 +9,7 @@ pub fn spawn_goblin(
     (min_health, max_health): (u32, u32),
     (map_width, map_height): (usize, usize),
 ) {
+    tracing::debug!(?num_goblins, ?min_health, ?max_health, "spawn_goblin");
     let goblins: Vec<_> = (0..num_goblins)
         .map(|_| {
             let ai = Ai::default();
@@ -26,5 +27,6 @@ pub fn spawn_goblin(
             (ai, pos, health, vision, renderable)
         })
         .collect();
+    tracing::trace!(?goblins);
     world.spawn_batch(goblins);
 }
