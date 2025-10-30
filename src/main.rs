@@ -1,10 +1,13 @@
 mod entities;
 mod models;
 mod systems;
+mod error;
 
+use std::cell::RefCell;
+use std::sync::Arc;
 use crate::entities::spawn_goblin;
 use crate::models::input::InputState;
-use crate::models::{Player, Position, Renderable};
+use crate::models::{Health, Player, Position, Renderable};
 use crate::systems::{AiSystem, InputSystem, SystemFunc};
 use doryen_rs::{App, AppOptions, DoryenApi, Engine, UpdateEvent};
 use hecs::World;
@@ -46,9 +49,9 @@ impl Engine for MyRoguelike {
                 glyph: '@',
                 color: (255, 92, 92, 255),
             },
+            Health::new(15),
+            InputState::default(),
         ));
-
-        self.world.spawn((InputState::default(),));
 
         spawn_goblin(
             &mut self.world,
@@ -66,6 +69,10 @@ impl Engine for MyRoguelike {
         //         self.screenshot_idx
         //     )));
         // }
+
+        // let api = Arc::new(RefCell::new(api));
+
+        // let world = Arc::new(&mut self.world);
 
         for system in &mut self.systems {
             if let Err(e) = system.call(&mut self.world, api) {
@@ -100,7 +107,7 @@ impl MyRoguelike {
         input_system.init(&mut world);
         Self {
             world,
-            systems: vec![Box::new(input_system), Box::new(AiSystem {})],
+            systems: vec![Box::new(input_system), Box::new(AiSystem::new())],
         }
     }
 }

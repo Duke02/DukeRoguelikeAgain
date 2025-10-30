@@ -1,14 +1,18 @@
+use crate::error::{DRError, DRResult};
 use crate::models::ai::{Action, Ai, Vision};
 use crate::models::input::InputState;
 use crate::models::{Health, Player, Position};
 use crate::{CONSOLE_HEIGHT, CONSOLE_WIDTH};
 use doryen_rs::DoryenApi;
-use hecs::{Entity, World};
+use hecs::{Entity, PreparedQuery, RefMut, With, World};
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::collections::HashSet;
-use std::error::Error;
+use std::ops::Deref;
+use std::sync::Arc;
 
 pub trait SystemFunc {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> Result<(), Box<dyn Error>>;
+    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()>;
 
     fn init(&mut self, world: &mut World) {}
 }
@@ -26,10 +30,13 @@ impl Default for InputSystem {
 }
 
 impl SystemFunc for InputSystem {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> Result<(), Box<dyn Error>> {
-        let mut player_pos_query = world.query_mut::<(&mut Position, &Player)>();
+    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+        let world = Arc::new(RefCell::new(world));
+        let mut binding = (*world).borrow_mut();
+        let mut player_pos_query = binding.query_mut::<(&mut Position, &Player)>();
 
-        let input = api.input();
+        let mut binding = (*api).borrow_mut();
+        let input = binding.input();
 
         let mut had_input = false;
 
@@ -53,7 +60,8 @@ impl SystemFunc for InputSystem {
         }
         drop(player_pos_query);
         // let input_state_query = world.query()
-        let mut input_state = world.get::<&mut InputState>(
+        let binding = world.borrow();
+        let mut input_state = binding.get::<&mut InputState>(
             self.input_state_entity_id
                 .expect("Input System was not initialized!"),
         )?;
@@ -66,48 +74,99 @@ impl SystemFunc for InputSystem {
     }
 }
 
-pub struct AiSystem;
+pub struct AiSystem {
+    health_query: RefCell<PreparedQuery<With<&'static Position, &'static Health>>>,
+    ai_query: RefCell<
+        PreparedQuery<(
+            &'static mut Ai,
+            &'static mut Position,
+            &'static Health,
+            &'static Vision,
+        )>,
+    >,
+    player_entity_id: Option<Entity>,
+}
 
-impl SystemFunc for AiSystem {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> Result<(), Box<dyn Error>> {
+impl AiSystem {
+    pub fn new() -> AiSystem {
+        Self {
+            health_query: RefCell::new(PreparedQuery::new()),
+            ai_query: RefCell::new(PreparedQuery::new()),
+            player_entity_id: None,
+        }
+    }
+
+    fn get_entity_locs(&self, world: &Arc<RefCell<&mut World>>) -> HashSet<Position> {
+        let binding = world.borrow();
+        self.health_query
+            .borrow_mut()
+            .query(&**binding)
+            .view()
+            .into_iter()
+            .map(|(_id, pos)| pos.clone())
+            .collect::<HashSet<Position>>()
+    }
+
+    fn was_input_handled_this_frame(&self, world: &World) -> bool {
         let mut binding = world.query::<&InputState>();
         let (_entity, input_state) = binding.into_iter().next().unwrap();
-        if !input_state.was_input_handled_this_frame {
+        input_state.was_input_handled_this_frame
+    }
+
+    // fn get_player_pos_health<'a>(
+    //     &self,
+    //     world: &'a Arc<RefCell<&'a mut World>>,
+    // ) -> Option<(Position, RefMut<'a, Health>)> {
+    //     Some((position, health))
+    // }
+
+    // fn get_ais(&self)
+}
+
+impl SystemFunc for AiSystem {
+    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+        if !self.was_input_handled_this_frame(&world) {
             return Ok(());
         }
-        let mut player_pos: Option<&Position> = None;
-        let mut binding = world.query::<(&Position, &Player)>();
-        for (_id, (player_pos_w, _player)) in binding.iter() {
-            player_pos = Some(player_pos_w);
-            break;
-        }
-        let player_pos = player_pos.expect("Cannot find player position.");
+
         // player_pos: &Position,
         //         my_position: &Position,
         //         my_health: &Health,
         //         my_vision: &Vision,
 
-        let mut health_pos_query = world.query::<(&Position, &Health)>();
-        let mut has_entity = health_pos_query
-            .view()
-            .into_iter()
-            .map(|(_id, (pos, _health))| pos.clone())
-            .collect::<HashSet<Position>>();
-        has_entity.insert(player_pos.clone());
-        drop(health_pos_query);
+        let world = Arc::new(RefCell::new(world));
 
-        let mut ai_query = world.query::<(&mut Ai, &mut Position, &Health, &Vision)>();
+        let has_entity = self.get_entity_locs(&world);
 
-        for (id, (ai, ai_pos, ai_health, ai_vision)) in ai_query.view().iter_mut() {
-            let action = ai.get_next_action(player_pos, ai_pos, ai_health, ai_vision);
+        let player_pos = world
+            .borrow()
+            .get::<&Position>(
+                self.player_entity_id
+                    .ok_or(DRError::MissingEntity("player".to_string()))?,
+            )?
+            .deref()
+            .clone();
+        let binding = world.borrow();
+        let mut player_health = binding.get::<&mut Health>(
+            self.player_entity_id
+                .ok_or(DRError::MissingEntity("player".to_string()))?,
+        )?;
+
+        // let (player_pos, mut player_health) = self
+        //     .get_player_pos_health(&world)
+        //     .ok_or(DRError::ComponentMissing("Position/Health".to_string()))?;
+
+        let mut binding = self.ai_query.borrow_mut();
+        let mut binding2 = (*world).borrow_mut();
+        let ai_query = binding.query_mut(&mut binding2);
+
+        for (id, (ai, ai_pos, ai_health, ai_vision)) in ai_query {
+            let action = ai.get_next_action(&player_pos, ai_pos, ai_health, ai_vision);
             println!("Entity with ID {id:?} will do action {action:?}");
             match action {
                 Action::GoTo(new_pos) => {
+                    // TODO: Add bounds/occupancy checking.
                     let Position { x, y } = ai_pos.go_towards(&new_pos);
-                    // if ai_pos.fast_distance(&Position {x, y}) > 0.0 {
-                    //     assert_ne!(x, ai_pos.x);
-                    //     assert_ne!(y, ai_pos.y);
-                    // }
                     ai_pos.x = x;
                     ai_pos.y = y
                 }
@@ -124,5 +183,24 @@ impl SystemFunc for AiSystem {
             }
         }
         Ok(())
+    }
+    fn init(&mut self, world: &mut World) {
+        self.player_entity_id = Some(
+            world
+                .query::<&Player>()
+                .iter()
+                .next()
+                .expect("Have not initialized player yet.")
+                .0,
+        );
+    }
+}
+
+/// Deletes dead AIs and spawns new ones as needed.
+struct AiHandlerSystem;
+
+impl SystemFunc for AiHandlerSystem {
+    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+        todo!()
     }
 }
