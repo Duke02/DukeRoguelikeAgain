@@ -16,6 +16,7 @@ use tracing::log::{Level, LevelFilter};
 use tracing_subscriber::field::MakeExt;
 use tracing_subscriber::fmt::format;
 use tracing_subscriber::fmt::format::FmtSpan;
+
 // // this part makes it possible to compile to wasm32 target
 // #[cfg(target_arch = "wasm32")]
 // use wasm_bindgen::prelude::*;
