@@ -76,6 +76,10 @@ impl Position {
         out
     }
 
+    pub fn new_from_dx_dy(&self, dx: isize, dy: isize) -> Position {
+        Position::new(self.x + dx, self.y + dy)
+    }
+
     /// Output is in radians. Uses Manhattan distance by default.
     pub fn angle(&self, other: &Position) -> f64 {
         let dx = (other.x - self.x) as f64;

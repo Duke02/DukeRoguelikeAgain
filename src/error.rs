@@ -5,7 +5,8 @@ use hecs::{ComponentError, NoSuchEntity};
 #[derive(Debug)]
 pub enum DRError {
     ComponentMissing(String),
-    MissingEntity(String)
+    MissingEntity(String),
+    GameOver,
 }
 
 impl Display for DRError {

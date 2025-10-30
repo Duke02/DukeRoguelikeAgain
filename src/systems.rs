@@ -7,9 +7,20 @@ use crate::{CONSOLE_HEIGHT, CONSOLE_WIDTH};
 use doryen_rs::DoryenApi;
 use hecs::{Entity, PreparedQuery, Ref, With, World};
 use std::borrow::BorrowMut;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
+
+fn get_entity_locations(world: &mut World) -> HashMap<Position, Entity> {
+    let positions = world
+        .query::<&Position>()
+        .view()
+        .into_iter()
+        .map(|(id, pos)| (pos.clone(), id))
+        .collect::<HashMap<Position, Entity>>();
+    tracing::trace!(?positions, "get_entity_locations");
+    positions
+}
 
 pub trait SystemFunc {
     fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()>;
@@ -36,42 +47,57 @@ impl SystemFunc for InputSystem {
         tracing::trace!("InputSystem::call");
         // let world = Arc::new(RefCell::new(world));
         // let mut binding = (*world).borrow_mut();
-        let mut player_pos_query = world.query_mut::<(&mut Position, &Player)>();
-
-        // let mut binding = (*api).borrow_mut();
+        let player_input_id = self
+            .input_state_entity_id
+            .ok_or(DRError::MissingEntity("player".to_string()))?;
+        let player = match world.entity(player_input_id) {
+            Ok(player) => player,
+            Err(e) => {
+                tracing::warn!(
+                    "Cannot find player! Got error {e} Was it added? Assuming game over."
+                );
+                return Err(DRError::GameOver);
+            }
+        };
         let input = api.input();
 
-        let mut had_input = false;
+        // let mut had_input = false;
 
-        for (_id, (player_pos, _player)) in player_pos_query.view().iter_mut() {
-            if input.key("ArrowLeft") {
-                player_pos.x = (player_pos.x - 1).max(1);
-                had_input = true;
-            } else if input.key("ArrowRight") {
-                player_pos.x = (player_pos.x + 1).min((CONSOLE_WIDTH as i32 - 2) as isize);
-                had_input = true;
-            }
-            if input.key("ArrowUp") {
-                player_pos.y = (player_pos.y - 1).max(1);
-                had_input = true;
-            } else if input.key("ArrowDown") {
-                player_pos.y = (player_pos.y + 1).min((CONSOLE_HEIGHT as i32 - 2) as isize);
-                had_input = true;
-            }
-            // We should only have a single player instance in the entire thing.
-            break;
+        let mut player_pos = world.get::<&mut Position>(player.entity())?;
+        let mut next_position = None;
+
+        if input.key("ArrowLeft") {
+            next_position = Some(player_pos.new_from_dx_dy(-1, 0));
+            // player_pos.x = (player_pos.x - 1).max(1);
+        } else if input.key("ArrowRight") {
+            next_position = Some(player_pos.new_from_dx_dy(1, 0));
+            // player_pos.x = (player_pos.x + 1).min((CONSOLE_WIDTH as i32 - 2) as isize);
+        } else if input.key("ArrowUp") {
+            next_position = Some(player_pos.new_from_dx_dy(0, -1));
+            // player_pos.y = (player_pos.y - 1).max(1);
+        } else if input.key("ArrowDown") {
+            next_position = Some(player_pos.new_from_dx_dy(0, 1));
+            // player_pos.y = (player_pos.y + 1).min((CONSOLE_HEIGHT as i32 - 2) as isize);
         }
-        drop(player_pos_query);
 
         // let input_state_query = world.query()
         let mut input_state = world.get::<&mut InputState>(
             self.input_state_entity_id
                 .expect("Input System was not initialized!"),
         )?;
-        if input_state.was_input_handled_this_frame != had_input {
+        if let Some(next_position) = next_position {
             tracing::debug!("Flipping the input state!");
+            input_state.was_input_handled_this_frame = true;
+
+            let Position { x: nx, y: ny } = next_position;
+            if nx >= 1 && nx <= (CONSOLE_WIDTH - 2) as isize {
+                player_pos.x = nx;
+            }
+            if ny >= 1 && ny <= (CONSOLE_HEIGHT - 2) as isize {
+                player_pos.y = ny;
+            }
         }
-        input_state.was_input_handled_this_frame = had_input;
+
         Ok(())
     }
 
@@ -113,15 +139,11 @@ impl AiSystem {
     }
 
     fn get_entity_locs(&mut self, world: &mut World) -> HashSet<Position> {
-        let positions = self
-            .health_query
-            .query(world)
-            .view()
+        get_entity_locations(world)
+            .keys()
             .into_iter()
-            .map(|(_id, pos)| pos.clone())
-            .collect::<HashSet<Position>>();
-        tracing::trace!(?positions, "get_entity_locs");
-        positions
+            .map(|pos| pos.clone())
+            .collect()
     }
 
     fn was_input_handled_this_frame(&self, world: &World) -> bool {
