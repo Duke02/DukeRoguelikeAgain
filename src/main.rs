@@ -1,9 +1,11 @@
 mod entities;
 mod error;
+mod events;
 mod models;
 mod systems;
 
 use crate::entities::spawn_goblin;
+use crate::events::{Event, EventBusManager, EventHandler};
 use crate::models::input::InputState;
 use crate::models::stats::Health;
 use crate::models::{Player, Position, Renderable};
@@ -16,7 +18,6 @@ use tracing::log::{Level, LevelFilter};
 use tracing_subscriber::field::MakeExt;
 use tracing_subscriber::fmt::format;
 use tracing_subscriber::fmt::format::FmtSpan;
-
 // // this part makes it possible to compile to wasm32 target
 // #[cfg(target_arch = "wasm32")]
 // use wasm_bindgen::prelude::*;
@@ -40,6 +41,7 @@ const CONSOLE_HEIGHT: u32 = 45;
 struct MyRoguelike {
     world: World,
     systems: Vec<Box<dyn SystemFunc>>,
+    event_bus_manager: EventBusManager,
 }
 
 impl Engine for MyRoguelike {
@@ -74,7 +76,7 @@ impl Engine for MyRoguelike {
         tracing::info!("Initializing all ECS systems...");
         for system in self.systems.iter_mut() {
             tracing::debug!("Initializing {}...", system.get_name());
-            system.init(&mut self.world);
+            system.init(&mut self.world, &mut self.event_bus_manager);
         }
     }
     fn update(&mut self, api: &mut dyn DoryenApi) -> Option<UpdateEvent> {
@@ -94,10 +96,12 @@ impl Engine for MyRoguelike {
         tracing::trace!("Processing systems...");
         for system in &mut self.systems {
             tracing::trace!("Updating {}...", system.get_name());
-            if let Err(e) = system.call(&mut self.world, api) {
+            if let Err(e) = system.call(&mut self.world, api, &mut self.event_bus_manager) {
                 tracing::error!("Got error while running system {e:?}");
             }
         }
+        // Process all events that the systems queued up to be processed.
+        self.event_bus_manager.dispatch_all(&mut self.world);
         // sleep(Duration::from_millis(250));
 
         None
@@ -123,15 +127,16 @@ impl Engine for MyRoguelike {
 impl MyRoguelike {
     pub fn new() -> Self {
         let world = World::new();
-        let input_system = InputSystem::default();
+        let event_bus_manager = EventBusManager::new();
+        event_bus_manager.subscribe(Arc::new(DeadCollector::default()));
         Self {
             world,
             systems: vec![
-                Box::new(input_system),
+                Box::new(InputSystem::default()),
                 Box::new(AiSystem::new()),
                 Box::new(DamageSystem::default()),
-                Box::new(DeadCollector::default()),
             ],
+            event_bus_manager,
         }
     }
 }

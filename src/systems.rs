@@ -1,4 +1,6 @@
 use crate::error::{DRError, DRResult};
+use crate::events::EventBusManager;
+use crate::events::{DeadEntity, EventBus, EventHandler};
 use crate::models::ai::{Action, Ai, Vision};
 use crate::models::input::InputState;
 use crate::models::stats::{Damage, Health};
@@ -6,12 +8,14 @@ use crate::models::{Player, Position};
 use crate::{CONSOLE_HEIGHT, CONSOLE_WIDTH};
 use doryen_rs::DoryenApi;
 use hecs::{Entity, PreparedQuery, Ref, With, World};
+use std::borrow::Borrow;
 use std::borrow::BorrowMut;
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
+use tracing::{event, warn};
 
-fn get_entity_locations(world: &mut World) -> HashMap<Position, Entity> {
+fn get_entity_locations(world: &World) -> HashMap<Position, Entity> {
     let positions = world
         .query::<&Position>()
         .view()
@@ -23,9 +27,14 @@ fn get_entity_locations(world: &mut World) -> HashMap<Position, Entity> {
 }
 
 pub trait SystemFunc {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()>;
+    fn call(
+        &mut self,
+        world: &mut World,
+        api: &mut dyn DoryenApi,
+        event_bus_manager: &mut EventBusManager,
+    ) -> DRResult<()>;
 
-    fn init(&mut self, world: &mut World) {}
+    fn init(&mut self, world: &mut World, event_bus_manager: &mut EventBusManager) {}
 
     fn get_name(&self) -> String;
 }
@@ -43,10 +52,16 @@ impl Default for InputSystem {
 }
 
 impl SystemFunc for InputSystem {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+    fn call(
+        &mut self,
+        world: &mut World,
+        api: &mut dyn DoryenApi,
+        event_bus_manager: &mut EventBusManager,
+    ) -> DRResult<()> {
         tracing::trace!("InputSystem::call");
         // let world = Arc::new(RefCell::new(world));
         // let mut binding = (*world).borrow_mut();
+        let entity_locations = get_entity_locations(world);
         let player_input_id = self
             .input_state_entity_id
             .ok_or(DRError::MissingEntity("player".to_string()))?;
@@ -62,7 +77,6 @@ impl SystemFunc for InputSystem {
         let input = api.input();
 
         // let mut had_input = false;
-
         let mut player_pos = world.get::<&mut Position>(player.entity())?;
         let mut next_position = None;
 
@@ -85,20 +99,32 @@ impl SystemFunc for InputSystem {
             self.input_state_entity_id
                 .expect("Input System was not initialized!"),
         )?;
+        input_state.was_input_handled_this_frame = false;
         if let Some(next_position) = next_position {
-            tracing::debug!("Flipping the input state!");
-            input_state.was_input_handled_this_frame = true;
+            if next_position.is_within_console_bounds()
+                && !entity_locations.contains_key(&next_position)
+            {
+                tracing::debug!("Flipping the input state!");
+                input_state.was_input_handled_this_frame = true;
 
-            if next_position.is_within_console_bounds() {
                 player_pos.x = next_position.x;
                 player_pos.y = next_position.y;
+                drop(player_pos);
+            } else if let Some(entity) = entity_locations.get(&next_position) {
+                tracing::debug!("Attacking entity {entity:?}");
+                input_state.was_input_handled_this_frame = true;
+                event_bus_manager.enqueue(Damage {
+                    from: player_input_id,
+                    to: entity.clone(),
+                    damage: 2,
+                });
             }
         }
 
         Ok(())
     }
 
-    fn init(&mut self, world: &mut World) {
+    fn init(&mut self, world: &mut World, event_bus_manager: &mut EventBusManager) {
         self.input_state_entity_id = Some(
             world
                 .query::<&InputState>()
@@ -169,7 +195,12 @@ impl AiSystem {
 }
 
 impl SystemFunc for AiSystem {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+    fn call(
+        &mut self,
+        world: &mut World,
+        api: &mut dyn DoryenApi,
+        event_bus_manager: &mut EventBusManager,
+    ) -> DRResult<()> {
         if !self.was_input_handled_this_frame(&world) {
             tracing::trace!("Player didn't do any input so skipping AI...");
             return Ok(());
@@ -209,7 +240,6 @@ impl SystemFunc for AiSystem {
         let binding = self.ai_query.borrow_mut();
         let ai_query = binding.query_mut(world);
         tracing::info!("Processing AIs...");
-        let mut damages: Vec<(Damage,)> = Vec::new();
         for (id, (ai, ai_pos, ai_health, ai_vision)) in ai_query {
             let action = ai.get_next_action(&player_pos, ai_pos, ai_health, ai_vision);
             tracing::debug!("Entity with ID {id:?} will do action {action:?}");
@@ -229,11 +259,11 @@ impl SystemFunc for AiSystem {
                         tracing::debug!(
                             "Entity with ID {id:?} attacked the entity at {pos_to_attack:?}"
                         );
-                        damages.push((Damage {
+                        event_bus_manager.enqueue(Damage {
                             from: id,
                             to: player_id.clone(),
                             damage: 1,
-                        },))
+                        });
                     } else {
                         tracing::debug!(
                             "Entity with ID {id:?} tried to attack the empty air at {pos_to_attack:?}."
@@ -242,10 +272,9 @@ impl SystemFunc for AiSystem {
                 }
             }
         }
-        world.spawn_batch(damages);
         Ok(())
     }
-    fn init(&mut self, world: &mut World) {
+    fn init(&mut self, world: &mut World, event_bus_manager: &mut EventBusManager) {
         tracing::debug!("AiSystem::init");
         self.player_entity_id = Some(
             world
@@ -264,46 +293,66 @@ impl SystemFunc for AiSystem {
 
 /// BRING OUT YOUR DEAD!!
 pub struct DeadCollector {
-    dead_finder: PreparedQuery<&'static Health>,
+    // dead_finder: PreparedQuery<&'static Health>,
 }
 
 impl Default for DeadCollector {
     fn default() -> Self {
-        Self {
-            dead_finder: PreparedQuery::default(),
-        }
+        Self {}
     }
 }
 
-impl SystemFunc for DeadCollector {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
-        let ones_to_remove: Vec<_> = self
-            .dead_finder
-            .query(world)
-            .iter()
-            .filter(|(_, health)| health.current_health <= 0)
-            .map(|(id, _health)| id)
-            .collect();
-
-        for id in ones_to_remove {
-            world.despawn(id)?;
-        }
-        Ok(())
-    }
-    fn init(&mut self, world: &mut World) {
-        self.dead_finder = PreparedQuery::new();
-    }
-
-    fn get_name(&self) -> String {
-        "DeadCollector".to_string()
+impl EventHandler<DeadEntity> for DeadCollector {
+    fn handle(&self, event: &mut DeadEntity, world: &mut World) {
+        match world.despawn(event.entity) {
+            Ok(()) => (),
+            Err(e) => {
+                tracing::warn!("Could not despawn supposedly dead entity due to error {e}");
+                ()
+            }
+        };
     }
 }
+
+// impl SystemFunc for DeadCollector {
+//     fn call(
+//         &mut self,
+//         world: &mut World,
+//         api: &mut dyn DoryenApi,
+//         event_bus_manager: &mut EventBusManager,
+//     ) -> DRResult<()> {
+//         let ones_to_remove: Vec<_> = self
+//             .dead_finder
+//             .query(world)
+//             .iter()
+//             .filter(|(_, health)| health.current_health <= 0)
+//             .map(|(id, _health)| id)
+//             .collect();
+//
+//         for id in ones_to_remove {
+//             world.despawn(id)?;
+//         }
+//         Ok(())
+//     }
+//     fn init(&mut self, world: &mut World, event_bus_manager: &mut EventBusManager) {
+//         self.dead_finder = PreparedQuery::new();
+//     }
+//
+//     fn get_name(&self) -> String {
+//         "DeadCollector".to_string()
+//     }
+// }
 
 /// Deletes dead AIs and spawns new ones as needed.
 struct AiHandlerSystem;
 
 impl SystemFunc for AiHandlerSystem {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+    fn call(
+        &mut self,
+        world: &mut World,
+        api: &mut dyn DoryenApi,
+        event_bus_manager: &mut EventBusManager,
+    ) -> DRResult<()> {
         todo!()
     }
 
@@ -318,7 +367,12 @@ pub struct DamageSystem {
 }
 
 impl SystemFunc for DamageSystem {
-    fn call(&mut self, world: &mut World, api: &mut dyn DoryenApi) -> DRResult<()> {
+    fn call(
+        &mut self,
+        world: &mut World,
+        api: &mut dyn DoryenApi,
+        event_bus_manager: &mut EventBusManager,
+    ) -> DRResult<()> {
         // Get all entities that need damage applied to them
         // Then remove the health from them.
         for (_, damage) in self.damage_query.query(&world).iter() {
@@ -328,7 +382,7 @@ impl SystemFunc for DamageSystem {
 
         Ok(())
     }
-    fn init(&mut self, world: &mut World) {
+    fn init(&mut self, world: &mut World, event_bus_manager: &mut EventBusManager) {
         self.damage_query = PreparedQuery::new();
     }
 
